@@ -42,7 +42,7 @@
 # Recursively descend the current directory. Use minimum memory resources. 
 # Do a merge sort on the resulting output using the full path name as the 
 # sort key.
-#
+# {{{
 # 20151201.181122.8576819
 # 20151201.192009.2997008
 # 20151208.185909.3024239
@@ -105,9 +105,7 @@ encodeFix = 'xmlcharrefreplace'  # PEP 383 [ http://j.mp/1OwrztW ]
 # {{{ `fsEncoding`
 # default file system encoding for this system
 #
-fsEncoding = 'utf-8'   # sys.getfilesystemencoding()
-fsEncoding = 'utf-16'  # sys.getfilesystemencoding()
-fsEncoding = sys.getfilesystemencoding( )
+fsEncoding = ''
 # }}}
 # {{{ `pantry` is a dictionary whose
 # keys are the names of all the 
@@ -320,6 +318,11 @@ iNodeBase = {
     'win32'  : B56,
 }
 
+fsEncodeDict = {
+    'linux'  : sys.getfilesystemencoding( ),
+    'android': sys.getfilesystemencoding( ),
+    'win32'  : 'utf-16',
+}
 
 # }}}
 
@@ -845,12 +848,14 @@ def main( sysArgv: list, kwargs=None ):
     global fLog
     global fRaw
     global fSrt
+    global fsEncoding
     platformKey = platform.platform( )
     if platformKey not in platformID:
         err_msg = "[BAILINGOUT]::** platformKey == " + platformKey + " is not supported **"
         sys.exit( err_msg )
 
     platformType = platformID[ platformKey ]
+    fsEncoding = fsEncodeDict[ platformType ] 
     if 'win32' == platformType:
         #
         # Belts & Suspenders here. 'pycharmRemoteDebugPath' is only
