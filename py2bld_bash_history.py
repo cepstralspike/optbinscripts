@@ -11,10 +11,11 @@
 # from the bash command line
 #
 # This was originally written in perl and bash
-# Then I made a version in python3. But since 
-# I want to use the latest version of py3 (I 
-# compile it), py3 might not be set up yet at 
-# the time this command is invoked. 
+# Then I made a version in python3. But sometimes 
+# Sometimes I want to use the latest version of py3 
+# (git clone; configure; make install) without 
+# breaking the py3 version from apt, py3 might not 
+# be set up yet.
 #
 # So, I thought it wise to convert the py3 to py2 
 # since my fundamental bash startup depends on it. 
@@ -66,8 +67,9 @@ ctrlA = unicode(unichr(1))
 fsEncoding = sys.getfilesystemencoding()
 # }}}
 
-heredoc_end = "MMM"
+default_heredoc_end = "QUIT_LOOKING_GNIKOOL_TIUQ"
 default_time_stamp = "1458089970"
+default_text_line = "echo default_text_line"
 
 # {{{ regular expressions 
 #
@@ -93,6 +95,7 @@ blankline_re = re.compile(re.sub(WS, nullstr, ur"""
     """))
 
 heredoc_re = re.compile(re.sub(WS, nullstr, ur"""
+    [#]{0,1}
     <<
     \s*
     (\w+)
@@ -122,6 +125,10 @@ file_name_re = re.compile(re.sub(WS, nullstr, ur"""
 # }}}
 
 def getfilelist(dir_name):
+    #
+    # Get the names of all the files in a directory
+    # return those names in a single list (rtn_list)
+    #
     rtn_list = []
     for base_name in os.listdir(dir_name):
         full_name = os.path.join(dir_name, base_name)
@@ -183,8 +190,8 @@ def main(sys_argv, kwargs=None):
 
     h_dict = {}
     flist = getfilelist(search_path)
-    for entry in flist:
-        full_name = os.path.join(search_path, entry)
+    for base_name in flist:
+        full_name = os.path.join(search_path, base_name)
 
         if not os.access(full_name, os.R_OK):
             print u"*** Could not access [ ", full_name, u" ] ***"
@@ -201,60 +208,98 @@ def main(sys_argv, kwargs=None):
 
         scan_state = u"LOOK4TIMESTAMP"
         prior_time_stamp = default_time_stamp
+        text_line = default_text_line
         time_stamp = default_time_stamp
+        heredoc_end = default_heredoc_end 
+        line_number = 0
         for text_line in fH: # {{{
+            line_number = line_number + 1
+            error_locator = '{0:07d}:{1}'.format(line_number, base_name)
             text_line = text_line.rstrip()
             if ( re.search(blankline_re, text_line ) ):
-                continue
+                continue #51FE142E 
             if scan_state == u"LOOK4TIMESTAMP": # {{{
                 time_stamp_found = re.search(time_stamp_re, text_line)
                 if time_stamp_found:
-                    scan_state = u"LOOK4COMMAND"
                     prior_time_stamp = time_stamp
                     time_stamp = time_stamp_found.group(1)
+                    scan_state = u"LOOK4COMMAND"
                 else:
                     #
                     # It is not a time_stamp so it should be a command
+                    # this should not happen but I do my best to compensate.
                     #
                     if not text_line:
-                        text_line = 'ls'
+                        text_line = default_text_line 
                     h_dict[text_line] = prior_time_stamp # give it the last stamp you found.
-                    print u"*** TimeStamp Missing. Found [ ", text_line, u" ] instead. ***"
+                    errmsg = u"{0}\n*** TimeStamp Missing. Found [ {1} ] instead. ***\n"
+                    print errmsg.format(error_locator, text_line)
 
             elif scan_state == u"LOOK4COMMAND":
                 heardoc_found = re.search(heredoc_re, text_line)
+                time_stamp_found = re.search(time_stamp_re, text_line)
                 if heardoc_found:
-                    scan_state = u"LOOK4HEARDOCEND"
                     heredoc_end = heardoc_found.group(1)
                     heredoc_end_re = re.compile('\A' + heardoc_found.group(1) + '\Z')
+                    #
+                    # The purpose of this datestamp encoding of the heredoc
+                    # sequence is to override the default de-duplication of
+                    # commands and to ensure that the heredoc sequence order
+                    # is preserved.
+                    #
+                    text_line2save = '#<<{2}{0:8.6f}>> {1} #'.format(time.clock(), text_line, time_stamp)
+                    h_dict[text_line2save] = time_stamp
+                    scan_state = u"LOOK4HEARDOCEND"
+                elif time_stamp_found:
+                    #
+                    # update to the newer time_stamp
+                    #
+                    if ( time_stamp_found.group(1) > time_stamp ):
+                        prior_time_stamp = time_stamp
+                        time_stamp = time_stamp_found.group(1)
+                    errmsg = u"{0}\n*** Out Of Place TimeStamp Found [ {1} ]  ***\n"
+                    print errmsg.format(error_locator, text_line)
                 else:
-                    scan_state = u"LOOK4TIMESTAMP"
-                if text_line in h_dict:
-                    if h_dict[text_line] < time_stamp:
-                        #
-                        # It is not a time_stamp so it should be a command
-                        #
+                    #
+                    # THIS SHOULD BE THE ROAD MOST TRAVELED
+                    # usually looking for a command finds a command (I hope)
+                    #
+                    if text_line in h_dict:
+                        if h_dict[text_line] < time_stamp:
+                            #
+                            # It is not a time_stamp and
+                            # up top (#51FE142E) I filter out all blank
+                            # lines, so it should be safe to
+                            # treat it like a command.
+                            #
+                            h_dict[text_line] = time_stamp
+                    else:
                         h_dict[text_line] = time_stamp
-                else:
-                    h_dict[text_line] = time_stamp
+                    scan_state = u"LOOK4TIMESTAMP"
+
             elif scan_state == u"LOOK4HEARDOCEND":
-                if re.search(heredoc_end_re, text_line):
+                heredoc_end_found = re.search(heredoc_end_re, text_line)
+                time_stamp_found = re.search(time_stamp_re, text_line)
+                if heredoc_end_found:
                     #
                     # found the end of the heredoc so 
                     # now ok to look for a timestamp
                     #
                     scan_state = u"LOOK4TIMESTAMP"
-                time_stamp_found = re.search(time_stamp_re, text_line)
-                if time_stamp_found:
+                    heredoc_end = default_heredoc_end
+                    text_line2save = '#<<{2}{0:8.6f}>> {1} #'.format(time.clock(), text_line, time_stamp)
+                    h_dict[text_line2save] = time_stamp
+                elif time_stamp_found:
                     #
-                    # this catches prior dangling heardocs
+                    # this catches unterminated heredocs
                     #
                     time_stamp = time_stamp_found.group(1)
-                elif text_line in h_dict:
-                    if h_dict[text_line] < time_stamp:
-                        h_dict[text_line] = time_stamp
+                    errmsg = u"{0}\n*** UNTERMINATED HEREDOC DETECTED  ***\n"
+                    print errmsg.format(error_locator)
+                    scan_state = u"LOOK4COMMAND"
                 else:
-                    h_dict[text_line] = time_stamp
+                    text_line2save = '#<<{2}{0:8.6f}>> {1} #'.format(time.clock(), text_line, time_stamp)
+                    h_dict[text_line2save] = time_stamp
 
             # }}}
         # }}}
