@@ -68,18 +68,17 @@ fsEncoding = sys.getfilesystemencoding()
 # }}}
 
 default_heredoc_end = "QUIT_LOOKING_GNIKOOL_TIUQ"
-default_time_stamp = "1300000000"
+default_time_stamp = "1200000000"
 default_text_line = "echo default_text_line"
+heredoc_list = []
+heredoc_timestamp = default_time_stamp
 
 # {{{ regular expressions 
 #
 WS = u'[\s]'
 
-h_list_item_re = re.compile(re.sub(WS, nullstr, ur"""
-    \A
-    ((\d){10})
-    (.*)
-    """))
+double_lessthan_re = re.compile('[<][<]')
+
 
 time_stamp_re = re.compile(re.sub(WS, nullstr, ur"""
     \A
@@ -188,7 +187,7 @@ def main(sys_argv, kwargs=None):
     # 
     # }}}
 
-    h_dict = {}
+    cmd_tstamp_keyvalue_pairs = {}
     flist = getfilelist(search_path)
     for base_name in flist:
         full_name = os.path.join(search_path, base_name)
@@ -219,87 +218,147 @@ def main(sys_argv, kwargs=None):
             if ( re.search(blankline_re, text_line ) ):
                 continue #51FE142E 
             if scan_state == u"LOOK4TIMESTAMP": # {{{
+                heredoc_found = re.search(heredoc_re, text_line)
                 time_stamp_found = re.search(time_stamp_re, text_line)
-                if time_stamp_found:
+                if heredoc_found:
+                    scan_state = u"LOOK4HEREDOCEND"
+                    heredoc_end = heredoc_found.group(1)
+                    heredoc_end_re = re.compile('\A' + heredoc_found.group(1) + '\Z')
+                    heredoc_list = []
+                    heredoc_timestamp = time_stamp
+                    heredoc_list.append(text_line)
+                elif time_stamp_found:
+                    scan_state = u"LOOK4COMMAND"
                     prior_time_stamp = time_stamp
                     time_stamp = time_stamp_found.group(1)
-                    scan_state = u"LOOK4COMMAND"
                 else:
+                    scan_state = u"LOOK4TIMESTAMP"
                     #
-                    # It is not a time_stamp so it should be a command
-                    # this should not happen but I do my best to compensate.
+                    # Not a timestamp
+                    # Not a Heredoc
+                    # Not Blank
+                    # Must be command
                     #
-                    if not text_line:
-                        text_line = default_text_line 
-                    h_dict[text_line] = prior_time_stamp # give it the last stamp you found.
-                    errmsg = u"{0}\n*** TimeStamp Missing. Found [ {1} ] instead. ***\n"
-                    print errmsg.format(error_locator, text_line)
+                    if text_line in cmd_tstamp_keyvalue_pairs:
+                        if cmd_tstamp_keyvalue_pairs[text_line] < time_stamp:
+                            #
+                            # It is not a time_stamp and
+                            # up top at (#51FE142E) I filter out all blank
+                            # lines, so it should be safe to
+                            # treat it like a command.
+                            #
+                            cmd_tstamp_keyvalue_pairs[text_line] = time_stamp
+                    else:
+                        #
+                        # This is the first time we've seen this command line
+                        # put a new entry in the keyvalue_pairs dictionary
+                        #
+                        cmd_tstamp_keyvalue_pairs[text_line] = time_stamp
+
 
             elif scan_state == u"LOOK4COMMAND":
-                heardoc_found = re.search(heredoc_re, text_line)
+                heredoc_found = re.search(heredoc_re, text_line)
                 time_stamp_found = re.search(time_stamp_re, text_line)
-                if heardoc_found:
-                    heredoc_end = heardoc_found.group(1)
-                    heredoc_end_re = re.compile('\A' + heardoc_found.group(1) + '\Z')
-                    #
-                    # The purpose of this datestamp encoding of the heredoc
-                    # sequence is to override the default de-duplication of
-                    # commands and to ensure that the heredoc sequence order
-                    # is preserved.
-                    #
-                    text_line2save = '#<<{2}{0:8.6f}>> {1} #'.format(time.clock(), text_line, time_stamp)
-                    h_dict[text_line2save] = time_stamp
-                    scan_state = u"LOOK4HEARDOCEND"
+                if heredoc_found:
+                    scan_state = u"LOOK4HEREDOCEND"
+                    heredoc_end = heredoc_found.group(1)
+                    heredoc_end_re = re.compile('\A' + heredoc_found.group(1) + '\Z')
+                    heredoc_list = []
+                    heredoc_timestamp = time_stamp
+                    heredoc_list.append(text_line)
                 elif time_stamp_found:
+                    scan_state = u"LOOK4COMMAND"
                     #
                     # update to the newer time_stamp
                     #
-                    if ( time_stamp_found.group(1) > time_stamp ):
-                        prior_time_stamp = time_stamp
-                        time_stamp = time_stamp_found.group(1)
+                    prior_time_stamp = time_stamp
+                    time_stamp = time_stamp_found.group(1)
                     errmsg = u"{0}\n*** Out Of Place TimeStamp Found [ {1} ]  ***\n"
                     print errmsg.format(error_locator, text_line)
                 else:
+                    scan_state = u"LOOK4TIMESTAMP"
+                    #
+                    # Not a timestamp
+                    # Not a Heredoc
+                    # Not Blank
+                    # Must be command
+                    #
                     #
                     # THIS SHOULD BE THE ROAD MOST TRAVELED
                     # usually looking for a command finds a command (I hope)
                     #
-                    if text_line in h_dict:
-                        if h_dict[text_line] < time_stamp:
+                    if text_line in cmd_tstamp_keyvalue_pairs:
+                        if cmd_tstamp_keyvalue_pairs[text_line] < time_stamp:
                             #
                             # It is not a time_stamp and
                             # up top (#51FE142E) I filter out all blank
                             # lines, so it should be safe to
                             # treat it like a command.
                             #
-                            h_dict[text_line] = time_stamp
+                            cmd_tstamp_keyvalue_pairs[text_line] = time_stamp
                     else:
-                        h_dict[text_line] = time_stamp
-                    scan_state = u"LOOK4TIMESTAMP"
+                        #
+                        # This is the first time we've seen this command line
+                        # put a new entry in the keyvalue_pairs dictionary
+                        #
+                        cmd_tstamp_keyvalue_pairs[text_line] = time_stamp
 
-            elif scan_state == u"LOOK4HEARDOCEND":
+            elif scan_state == u"LOOK4HEREDOCEND":
                 heredoc_end_found = re.search(heredoc_end_re, text_line)
                 time_stamp_found = re.search(time_stamp_re, text_line)
                 if heredoc_end_found:
+                    scan_state = u"LOOK4TIMESTAMP"
                     #
                     # found the end of the heredoc so 
                     # now ok to look for a timestamp
                     #
-                    scan_state = u"LOOK4TIMESTAMP"
+                    heredoc_list.append(text_line)
+                    heredoc_list.append(nullstr)
                     heredoc_end = default_heredoc_end
-                    text_line2save = '#<<{2}{0:8.6f}>> {1} #'.format(time.clock(), text_line, time_stamp)
-                    h_dict[text_line2save] = time_stamp
+                    #
+                    # Join all heredoc commands together in a 
+                    # single string with commands separated by
+                    # ascii(1) characters
+                    #
+                    text_line2save = ctrlA.join(heredoc_list)
+                    #
+                    # Associate the entire heredoc with a single timestamp
+                    #
+                    cmd_tstamp_keyvalue_pairs[text_line2save] = heredoc_timestamp
+                    #
+                    # Clear the heredoc_list for good house keeping
+                    #
+                    heredoc_list = []
                 elif time_stamp_found:
+                    scan_state = u"LOOK4COMMAND"
                     #
                     # this catches unterminated heredocs
+                    # each item in heredoc_list must become
+                    # a separate entry in cmd_tstamp_keyvalue_pairs
                     #
+                    heredoc_list[0] = '# '+ heredoc_list[0] + " # UNTERMINATED ***"
+                    for text_line in heredoc_list:
+                        if text_line in cmd_tstamp_keyvalue_pairs:
+                            #
+                            # command line is already in dictionary
+                            # I want the newest one so it
+                            # sorts closer to the end
+                            #
+                            if cmd_tstamp_keyvalue_pairs[text_line] < heredoc_timestamp:
+                                cmd_tstamp_keyvalue_pairs[text_line] = heredoc_timestamp
+                        else:
+                            #
+                            # This is the first time we've seen this command line
+                            # put a new entry in the keyvalue_pairs dictionary
+                            #
+                            cmd_tstamp_keyvalue_pairs[text_line] = heredoc_timestamp
+                    heredoc_list = []
                     time_stamp = time_stamp_found.group(1)
                     errmsg = u"{0}\n*** UNTERMINATED HEREDOC DETECTED  ***\n"
                     print errmsg.format(error_locator)
-                    scan_state = u"LOOK4COMMAND"
                 else:
-                    text_line2save = '#<<{2}{0:8.6f}>> {1} #'.format(time.clock(), text_line, time_stamp)
-                    h_dict[text_line2save] = time_stamp
+                    scan_state = u"LOOK4HEREDOCEND"
+                    heredoc_list.append(text_line)
 
             # }}}
         # }}}
@@ -313,15 +372,20 @@ def main(sys_argv, kwargs=None):
         print u"*** Could not open [ ", full_name, u" ] ***"
         exit(1)
 
-    h_list = []
-    for i in h_dict:
-        h_list.append(unicode(h_dict[i]) + i)
+    unique_command_list = []
+    cmdcount = len(list(cmd_tstamp_keyvalue_pairs.keys()))
+    print "command count is " + str(cmdcount)
+    for command_line in cmd_tstamp_keyvalue_pairs:
+        time_stamp = unicode(cmd_tstamp_keyvalue_pairs[command_line])
+        unique_command_list.append( u"#"        +
+                                    time_stamp  + 
+                                    ctrlA       +
+                                    command_line)
 
-    for i in sorted(h_list):
-        #print "i=" + i
-        splitter = re.search(h_list_item_re, i)
-        fH.write(u"#%s\n" % splitter.group(1))
-        fH.write(u"%s\n" % splitter.group(3))
+    for info2write in sorted(unique_command_list):
+        list2write = info2write.split(ctrlA)
+        for text_line in list2write:
+            fH.write(u"%s\n" % text_line)
 
     fH.close()
 
