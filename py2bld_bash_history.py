@@ -68,7 +68,7 @@ fsEncoding = sys.getfilesystemencoding()
 # }}}
 
 default_heredoc_end = "QUIT_LOOKING_GNIKOOL_TIUQ"
-default_time_stamp = "1458089970"
+default_time_stamp = "1300000000"
 default_text_line = "echo default_text_line"
 
 # {{{ regular expressions 
